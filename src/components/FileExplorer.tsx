@@ -1,7 +1,7 @@
 // src/components/FileExplorer.tsx
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useApp } from "@/store/useApp";
 import { classNames } from "@/utility/classNames";
-import { useCallback, useEffect, useRef, useState } from "react";
 
 interface FileItem {
   name: string;
@@ -11,15 +11,14 @@ interface FileItem {
 export default function FileExplorer() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [isAutoWatch, setIsAutoWatch] = useState(true); // Activé par défaut
   const [loading, setLoading] = useState(false);
   
-  // Cette ref permet de s'assurer qu'on ne charge le dernier fichier 
-  // QU'UNE SEULE FOIS au démarrage de l'appli, et plus jamais ensuite automatiquement.
-  const initialLoadDone = useRef(false);
-
+  // Ref pour comparer sans déclencher de re-rendus inutiles
+  const latestFileRef = useRef<string | null>(null);
   const setContents = useApp((state) => state.setContents);
 
-  // Fonction pour charger le contenu d'un fichier (sur clic uniquement)
+  // Fonction pour charger le contenu (mémorisée pour le useEffect)
   const loadFileContent = useCallback(async (filename: string) => {
     try {
       setLoading(true);
@@ -29,61 +28,88 @@ export default function FileExplorer() {
       if (data.content) {
         setContents({ contents: data.content, hasChanges: false });
         setSelectedFile(filename);
+        latestFileRef.current = filename;
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error("Erreur chargement fichier:", error);
     } finally {
       setLoading(false);
     }
   }, [setContents]);
 
-  // Fonction de récupération de la liste (Polling)
+  // Fonction de récupération de la liste
   const fetchFileList = useCallback(async () => {
     try {
       const res = await fetch('/api/files');
       const fileList: FileItem[] = await res.json();
       
       if (Array.isArray(fileList)) {
+        // Mise à jour de la liste
         setFiles(fileList);
 
-        // LOGIQUE D'INITIALISATION :
-        // On ne charge automatiquement QUE si c'est le tout premier lancement (F5)
-        // et qu'aucun fichier n'a encore été chargé.
-        if (!initialLoadDone.current && fileList.length > 0) {
-            loadFileContent(fileList[0].name);
-            initialLoadDone.current = true;
+        // LOGIQUE AUTO-SELECT:
+        // Si on a des fichiers, que le mode "Suivre" est actif, 
+        // et que le fichier le plus récent (index 0) est différent de celui qu'on a vu en dernier...
+        if (isAutoWatch && fileList.length > 0) {
+          const newestFileName = fileList[0].name;
+          
+          if (newestFileName !== latestFileRef.current) {
+            console.log("Nouveau fichier détecté :", newestFileName);
+            loadFileContent(newestFileName);
+          }
         }
       }
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("Erreur polling fichiers", e);
     }
-  }, [loadFileContent]);
+  }, [isAutoWatch, loadFileContent]);
 
-  // Intervalle de mise à jour de la liste (toutes les 2 secondes)
+  // Effect pour le polling (toutes les 2000ms)
   useEffect(() => {
-    fetchFileList(); // Appel immédiat
-    const intervalId = setInterval(fetchFileList, 2000); // Appel périodique
+    // Premier chargement immédiat
+    fetchFileList();
+
+    const intervalId = setInterval(fetchFileList, 2000);
     return () => clearInterval(intervalId);
   }, [fetchFileList]);
 
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-[#1e1e1e] border-r border-gray-200 dark:border-gray-700">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+      {/* Header avec bouton Toggle pour l'auto-sélection */}
+      <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+        <div>
           <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
             Explorateur
           </h2>
-          <p className="text-xs text-gray-400 mt-1 truncate">
+          <p className="text-xs text-gray-400 mt-1 truncate max-w-[150px]">
             ~/.../out/json
           </p>
+        </div>
+        
+        <button
+          onClick={() => setIsAutoWatch(!isAutoWatch)}
+          title={isAutoWatch ? "Suivi automatique activé (cliquer pour désactiver)" : "Suivi automatique désactivé"}
+          className={classNames(
+            "p-2 rounded transition-colors text-xs flex items-center gap-2",
+            isAutoWatch 
+              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" 
+              : "bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400"
+          )}
+        >
+          <div className={classNames("w-2 h-2 rounded-full", isAutoWatch ? "bg-green-500 animate-pulse" : "bg-gray-400")} />
+          {isAutoWatch ? "LIVE" : "OFF"}
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
-        {files.map((file, index) => (
+        {files.map((file) => (
           <button
             key={file.name}
-            onClick={() => loadFileContent(file.name)}
+            onClick={() => {
+              // Si l'utilisateur clique manuellement, on charge le fichier
+              // (Note: cela ne désactive pas forcément le mode Live, mais le prochain fichier généré prendra le dessus)
+              loadFileContent(file.name);
+            }}
             disabled={loading}
             className={classNames(
               "w-full text-left px-3 py-2 mb-1 text-sm rounded transition-colors group",
@@ -92,28 +118,20 @@ export default function FileExplorer() {
                 : "text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#2d2d2d]"
             )}
           >
-            <div className="font-medium truncate flex justify-between items-center">
-              <span className="truncate">{file.name}</span>
-              
-              {/* Indicateur visuel "LATEST" pour identifier le dernier fichier arrivé */}
-              {index === 0 && (
-                <span className={classNames(
-                    "text-[10px] px-1.5 py-0.5 rounded ml-2 font-semibold shadow-sm",
-                    selectedFile === file.name 
-                        ? "bg-white/20 text-white" 
-                        : "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
-                )}>
-                    NEW
-                </span>
+            <div className="font-medium truncate flex justify-between">
+              <span>{file.name}</span>
+              {/* Petit indicateur visuel si c'est le plus récent */}
+              {files.indexOf(file) === 0 && (
+                <span className="text-[10px] bg-blue-500/20 px-1 rounded text-blue-200 ml-2 self-center">NEW</span>
               )}
             </div>
             <div className={classNames(
-              "text-xs mt-1 flex justify-between",
+              "text-xs mt-0.5 flex justify-between",
               selectedFile === file.name ? "text-blue-200" : "text-gray-500"
             )}>
               <span>{new Date(file.mtime).toLocaleTimeString()}</span>
               <span className="opacity-0 group-hover:opacity-100 transition-opacity">
-                 {new Date(file.mtime).toLocaleDateString()}
+                {new Date(file.mtime).toLocaleDateString()}
               </span>
             </div>
           </button>
@@ -121,7 +139,7 @@ export default function FileExplorer() {
         
         {files.length === 0 && (
           <div className="p-4 text-center text-sm text-gray-500">
-            Aucun fichier trouvé...
+            En attente de fichiers...
           </div>
         )}
       </div>
