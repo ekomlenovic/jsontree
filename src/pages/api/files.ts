@@ -1,52 +1,75 @@
-// src/pages/api/files.ts
 import fs from 'fs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import os from 'os';
 import path from 'path';
 
-// Le chemin vers votre dossier spécifique
-const TARGET_DIR = path.join(
-    os.homedir(),
-    'ia-prod/commandes_auto/src/commandes_auto/data/out/json'
-);
-
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
     try {
-        const { filename } = req.query;
+        const { path: queryPath, action } = req.query;
 
-        // Cas 1: Lire le contenu d'un fichier spécifique
-        if (filename && typeof filename === 'string') {
-            const filePath = path.join(TARGET_DIR, filename);
+        // Chemin par défaut : Dossier de l'utilisateur ou chemin spécifique si fourni
+        // Si aucun chemin n'est fourni, on tente le chemin que vous aviez en dur, sinon le home
+        const defaultPath = path.join(os.homedir());
+        const safeDefault = fs.existsSync(defaultPath) ? defaultPath : os.homedir();
 
-            if (!fs.existsSync(filePath)) {
-                return res.status(404).json({ error: 'Fichier non trouvé' });
+        const targetPath = (queryPath as string) || safeDefault;
+
+        // ACTION: Lire un fichier
+        if (action === 'read') {
+            if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+                return res.status(404).json({ error: 'Fichier non trouvé ou est un dossier' });
             }
-
-            const content = fs.readFileSync(filePath, 'utf-8');
+            const content = fs.readFileSync(targetPath, 'utf-8');
             return res.status(200).json({ content });
         }
 
-        // Cas 2: Lister les fichiers du dossier
-        if (!fs.existsSync(TARGET_DIR)) {
-            return res.status(404).json({ error: 'Dossier introuvable: ' + TARGET_DIR });
+        // ACTION: Lister le dossier (défaut)
+        if (!fs.existsSync(targetPath)) {
+            return res.status(404).json({ error: 'Chemin introuvable' });
         }
 
-        const files = fs.readdirSync(TARGET_DIR)
-            .filter(file => file.endsWith('.json')) // On ne garde que les JSON
-            .map(file => {
-                const stats = fs.statSync(path.join(TARGET_DIR, file));
-                return {
-                    name: file,
-                    mtime: stats.mtime.getTime()
-                };
-            })
-            // Tri par date de modification décroissante (le plus récent en premier)
-            .sort((a, b) => b.mtime - a.mtime);
+        // Vérifier si c'est un dossier
+        const stat = fs.statSync(targetPath);
+        if (!stat.isDirectory()) {
+            // Si on pointe vers un fichier par erreur, on renvoie son dossier parent
+            return res.status(200).json({
+                path: path.dirname(targetPath),
+                files: [] // On forcera le rechargement coté client
+            });
+        }
 
-        return res.status(200).json(files);
+        const entries = fs.readdirSync(targetPath, { withFileTypes: true })
+            .map(entry => {
+                // On récupère les infos de date
+                try {
+                    const fullPath = path.join(targetPath, entry.name);
+                    const stats = fs.statSync(fullPath);
+                    return {
+                        name: entry.name,
+                        isDirectory: entry.isDirectory(),
+                        path: fullPath,
+                        mtime: stats.mtime.getTime()
+                    };
+                } catch (e) {
+                    return null;
+                }
+            })
+            .filter(Boolean) // Enlever les erreurs éventuelles
+            // Tri: Dossiers d'abord, puis fichiers par date récente
+            // @ts-ignore
+            .sort((a, b) => {
+                if (a.isDirectory === b.isDirectory) {
+                    return b.mtime - a.mtime; // Plus récent en premier
+                }
+                return a.isDirectory ? -1 : 1; // Dossiers en premier
+            });
+
+        return res.status(200).json({
+            path: targetPath, // On renvoie le chemin résolu pour l'UI
+            files: entries
+        });
 
     } catch (error: any) {
-        // eslint-disable-next-line no-console
         console.error(error);
         res.status(500).json({ error: error.message });
     }
