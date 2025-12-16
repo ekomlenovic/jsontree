@@ -1,20 +1,21 @@
-import { useRouter } from "next/router";
-import dynamic from "next/dynamic";
-import { useEffect } from "react";
-import { Fira_Mono, Montserrat } from "next/font/google";
+// src/pages/index.tsx
+import EditorInfobar from "@/components/EditorInfobar";
+import FileExplorer from "@/components/FileExplorer"; // Notre nouveau composant
 import { PageSEO } from "@/components/PageSEO";
 import { classNames } from "@/utility/classNames";
 import { Allotment } from "allotment";
-import MonacoEditor from "@/components/MonacoEditor";
-import EditorInfobar from "@/components/EditorInfobar";
 import "allotment/dist/style.css";
-import { useApp } from "@/store/useApp";
-import { JSON_TEMPLATE } from "@/constants/json";
+import dynamic from "next/dynamic";
+import { Fira_Mono, Montserrat } from "next/font/google";
+import { useRouter } from "next/router";
+import { useEffect } from "react";
+// import { JSON_TEMPLATE } from "@/constants/json"; // Plus nécessaire si on charge depuis les fichiers
 import Navbar from "@/components/Navbar";
-import { useTree } from "@/store/useTree";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useStored } from "@/store/useStored";
+import { useTree } from "@/store/useTree";
 
+// C'est cette définition qui manquait :
 const montserrat = Montserrat({ subsets: ["latin"] });
 
 export const firaMono = Fira_Mono({
@@ -28,7 +29,7 @@ const TreeEditor = dynamic(() => import("@/components/TreeEditor"), {
 
 export default function Home() {
   const { isReady } = useRouter();
-  const setContents = useApp((state) => state.setContents);
+  // const setContents = useApp((state) => state.setContents); 
   const fullscreen = useTree((state) => state.fullscreen);
   const toggleFullscreen = useTree((state) => state.toggleFullscreen);
   const lightmode = useStored((state) => state.lightmode);
@@ -43,11 +44,13 @@ export default function Home() {
     }
   }, [lightmode]);
 
-  useEffect(() => {
+  // J'ai commenté ceci pour éviter d'écraser le fichier chargé par l'explorateur
+  /* useEffect(() => {
     if (isReady) {
       setContents({ contents: JSON_TEMPLATE, hasChanges: false });
     }
   }, [isReady, setContents]);
+  */
 
   useEffect(() => {
     if (isScreenLessThan) toggleFullscreen(true);
@@ -78,7 +81,7 @@ export default function Home() {
               maxSize={isScreenLessThan ? Infinity : 700}
               visible={!fullscreen}
             >
-              <MonacoEditor />
+              <FileExplorer />
             </Allotment.Pane>
             <Allotment.Pane
               minSize={0}
